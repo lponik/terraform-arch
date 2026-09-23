@@ -1,0 +1,32 @@
+# Terraform local working directories
+**/.terraform/*
+
+# Terraform state files
+*.tfstate
+*.tfstate.*
+
+# Terraform crash logs
+crash.log
+crash.*.log
+
+# Terraform variable files can contain secrets.
+# Commit example files instead, such as terraform.tfvars.example.
+*.tfvars
+*.tfvars.json
+
+# Terraform local override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Terraform CLI config files
+.terraformrc
+terraform.rc
+
+# Local Floci emulator persistence data
+floci-data/
+
+# Local logs and OS/editor files
+*.log
+.DS_Store
