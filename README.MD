@@ -49,11 +49,6 @@ I deployed the project in `us-east-1` and confirmed that:
 
 [View the sanitized deployment evidence →](docs/evidence/README.md)
 
-## A Problem I Worked Through
-
-The first deployment encountered a temporary authentication error while new AWS permissions were propagating. Auto Scaling retried and successfully launched all three instances.
-
-I checked the live Auto Scaling Group and target health before making another change. Because the environment had recovered, I removed the Terraform taint instead of unnecessarily replacing healthy infrastructure. This reinforced the importance of verifying the real system state before reacting to an error.
 
 ## Repository Structure
 
