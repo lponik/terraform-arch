@@ -8,57 +8,7 @@ I developed the reusable Terraform module with the local Floci emulator, validat
 
 ## Architecture
 
-```mermaid
-flowchart TB
-    TF[Terraform<br/>Reusable web_service module] --> AWS
-    USERS[Internet users] -->|HTTP 80| IGW[Internet Gateway]
-    ADMIN[Administrator] --> SSM[AWS Systems Manager]
-
-    subgraph AWS[AWS Region: us-east-1]
-        subgraph VPC[VPC: 10.0.0.0/16]
-            IGW --> ALB[Public Application Load Balancer<br/>Health checks enabled]
-
-            subgraph AZA[us-east-1a]
-                PA[Public subnet A]
-                PRA[Private subnet A<br/>2 EC2 instances]
-            end
-            subgraph AZB[us-east-1b]
-                PB[Public subnet B]
-                PRB[Private subnet B<br/>1 EC2 instance]
-            end
-
-            ASG[Auto Scaling Group<br/>3 desired • 3–4 capacity]
-            ALB --- PA
-            ALB --- PB
-            ASG --> PRA
-            ASG --> PRB
-
-            ALB -->|HTTP 80| PRA
-            ALB -->|HTTP 80| PRB
-
-            EP[SSM interface endpoints]
-            S3EP[S3 gateway endpoint]
-            PRIVATE[Private route tables<br/>No internet route • No NAT Gateway]
-
-            PRA -->|HTTPS 443| EP
-            PRB -->|HTTPS 443| EP
-            PRA --> PRIVATE
-            PRB --> PRIVATE
-            PRIVATE --> S3EP
-        end
-
-        CW[CloudWatch alarms]
-        PRA -. CPU metrics .-> CW
-        PRB -. CPU metrics .-> CW
-        CW -. Scale in/out .-> ASG
-    end
-
-    SSM -->|Session Manager| EP
-    S3EP --> S3[Amazon S3]
-
-    SAFE[Security boundaries<br/>ALB → EC2 only on port 80<br/>No public IPs • No inbound SSH]
-    SAFE --- ASG
-```
+[![Terraform-managed resilient web service on AWS](docs/architecture/aws-resilient-web-service.png)](docs/architecture/aws-resilient-web-service.svg)
 
 The VPC spans two Availability Zones, with a public and private subnet in each. The public subnets host the load balancer and route internet traffic through an Internet Gateway. The private subnets host the EC2 instances and have no default route to the internet. VPC endpoints provide private paths to the AWS services the instances need.
 
@@ -114,7 +64,9 @@ terraform-arch/
 │   └── floci/        # Local emulator configuration
 ├── modules/
 │   └── web_service/  # Reusable infrastructure module
-└── docs/evidence/    # Sanitized AWS screenshots
+└── docs/
+    ├── architecture/ # Presentation-ready architecture diagram
+    └── evidence/     # Sanitized AWS screenshots
 ```
 
 ## Run the Project
