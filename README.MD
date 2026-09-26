@@ -1,104 +1,143 @@
-# Terraform + Floci Resilient Web Service Lab
+# Resilient AWS Web Service with Terraform
 
-This project uses Terraform and Floci to model a resilient AWS web service in a local environment. It was built to practice infrastructure patterns used in production, including network isolation, load balancing, autoscaling, health checks, IAM, private administrative access, and rolling updates, without creating billable AWS resources.
+This project deploys a small web service on AWS using Terraform. I built it to learn how to improve on a basic public EC2 deployment by adding private networking, load balancing, automatic recovery, and safer administrative access.
 
-The current version is a local infrastructure lab. Deployment and validation in a real AWS account are planned.
+The application runs on three private EC2 instances behind a public Application Load Balancer. An Auto Scaling Group maintains capacity across two Availability Zones, and AWS Systems Manager provides access without SSH or public IP addresses.
 
-## What It Builds
+I developed the reusable Terraform module with the local Floci emulator, validated it in real AWS, documented the results, and destroyed the resources afterward to control cost.
 
-The reusable `web_service` module creates:
+## Architecture
 
-- A VPC using `10.0.0.0/16`
-- Two public and two private subnets
-- An internet gateway and public routing
-- A public Application Load Balancer on port 80
-- An HTTP target group with health checks at `/`
-- An Auto Scaling Group of EC2 instances in the private subnets
-- A launch template and IAM instance profile
-- SSM access through `ssm` and `ssmmessages` interface endpoints
-- CloudWatch CPU alarms and scaling policies
-- Rolling instance refresh behavior
+```mermaid
+flowchart TB
+    TF[Terraform<br/>Reusable web_service module] --> AWS
+    USERS[Internet users] -->|HTTP 80| IGW[Internet Gateway]
+    ADMIN[Administrator] --> SSM[AWS Systems Manager]
 
-The instances install nginx and serve a simple test page:
+    subgraph AWS[AWS Region: us-east-1]
+        subgraph VPC[VPC: 10.0.0.0/16]
+            IGW --> ALB[Public Application Load Balancer<br/>Health checks enabled]
 
-```text
-Hello from Terraform + Floci (v2)
+            subgraph AZA[us-east-1a]
+                PA[Public subnet A]
+                PRA[Private subnet A<br/>2 EC2 instances]
+            end
+            subgraph AZB[us-east-1b]
+                PB[Public subnet B]
+                PRB[Private subnet B<br/>1 EC2 instance]
+            end
+
+            ASG[Auto Scaling Group<br/>3 desired • 3–4 capacity]
+            ALB --- PA
+            ALB --- PB
+            ASG --> PRA
+            ASG --> PRB
+
+            ALB -->|HTTP 80| PRA
+            ALB -->|HTTP 80| PRB
+
+            EP[SSM interface endpoints]
+            S3EP[S3 gateway endpoint]
+            PRIVATE[Private route tables<br/>No internet route • No NAT Gateway]
+
+            PRA -->|HTTPS 443| EP
+            PRB -->|HTTPS 443| EP
+            PRA --> PRIVATE
+            PRB --> PRIVATE
+            PRIVATE --> S3EP
+        end
+
+        CW[CloudWatch alarms]
+        PRA -. CPU metrics .-> CW
+        PRB -. CPU metrics .-> CW
+        CW -. Scale in/out .-> ASG
+    end
+
+    SSM -->|Session Manager| EP
+    S3EP --> S3[Amazon S3]
+
+    SAFE[Security boundaries<br/>ALB → EC2 only on port 80<br/>No public IPs • No inbound SSH]
+    SAFE --- ASG
 ```
 
-## How It Works
+The VPC spans two Availability Zones, with a public and private subnet in each. The public subnets host the load balancer and route internet traffic through an Internet Gateway. The private subnets host the EC2 instances and have no default route to the internet. VPC endpoints provide private paths to the AWS services the instances need.
 
-Internet traffic reaches the public Application Load Balancer, which forwards requests to healthy instances in the Auto Scaling Group. The instances remain in private subnets and accept HTTP traffic only from the ALB security group, so they are not directly exposed to the internet.
+## Why It Is Resilient
 
-Administrative access is designed around AWS Systems Manager rather than SSH. There is no key pair or inbound rule for port 22. The instances use an IAM role with `AmazonSSMManagedInstanceCore`, while private VPC endpoints provide access to `ssm` and `ssmmessages`.
+- Resources span two Availability Zones instead of depending on one location.
+- Public and private subnets exist in both Availability Zones, so the network design supports workloads in either zone.
+- The Auto Scaling Group maintains three instances and can replace unhealthy ones.
+- Load balancer health checks prevent traffic from reaching unhealthy targets.
+- CloudWatch CPU alarms can scale capacity between three and four instances.
+- Rolling instance refreshes keep at least 70% of the group healthy during updates.
+- Terraform makes the environment repeatable and reviewable.
 
-## Resilience and Scaling
+## Why It Is Safer
 
-The Auto Scaling Group is configured with:
+- EC2 instances have no public IPv4 addresses.
+- Separate route tables keep the private subnets from receiving a direct internet route.
+- Administration uses Session Manager instead of SSH or key pairs.
+- EC2 accepts HTTP only from the load balancer security group.
+- Systems Manager endpoints accept HTTPS only from the EC2 security group.
+- S3 and Systems Manager VPC endpoints provide private access to required AWS services without a NAT Gateway.
+- AWS credentials are supplied externally and are not stored in Terraform files.
+- State files, credentials, logs, and other sensitive local files are excluded from Git.
 
-- Minimum capacity: `3`
-- Desired capacity: `3`
-- Maximum capacity: `4`
-- ELB health checks with a 300-second grace period
+## AWS Validation
 
-CloudWatch CPU alarms connect to scaling policies that model how capacity can adjust as load changes.
+I deployed the project in `us-east-1` and confirmed that:
 
-Launch template versioning works with rolling instance refresh to replace instances gradually after configuration changes. During a refresh, at least `70%` of instances must remain healthy, and new instances receive a 300-second warmup period.
+- The public load balancer returned the expected Nginx response.
+- All three EC2 targets were healthy across two Availability Zones.
+- The instances had no public IP addresses.
+- The private route tables had no default internet route or NAT Gateway.
+- The S3 and Systems Manager endpoints were available.
+- All instances appeared online in Systems Manager Fleet Manager.
+- Session Manager provided shell access without SSH.
+- A final Terraform plan reported no configuration differences.
+- `terraform destroy` removed the temporary AWS resources.
 
-Terraform ignores later changes to `desired_capacity`. It sets the initial value, then leaves routine capacity adjustments to the scaling policies instead of resetting them during future applies.
+[View the sanitized deployment evidence →](docs/evidence/README.md)
 
-## Terraform Structure
+## A Problem I Worked Through
+
+The first deployment encountered a temporary authentication error while new AWS permissions were propagating. Auto Scaling retried and successfully launched all three instances.
+
+I checked the live Auto Scaling Group and target health before making another change. Because the environment had recovered, I removed the Terraform taint instead of unnecessarily replacing healthy infrastructure. This reinforced the importance of verifying the real system state before reacting to an error.
+
+## Repository Structure
 
 ```text
-environments/floci
-modules/web_service
+terraform-arch/
+├── environments/
+│   ├── aws/          # Real AWS configuration
+│   └── floci/        # Local emulator configuration
+├── modules/
+│   └── web_service/  # Reusable infrastructure module
+└── docs/evidence/    # Sanitized AWS screenshots
 ```
 
-`environments/floci` configures the AWS provider to use Floci at `http://localhost:4566`. It uses dummy credentials and disables AWS account and credential validation because no live AWS account is involved.
+## Run the Project
 
-`modules/web_service` contains the networking, security, load balancing, compute, IAM, SSM, monitoring, scaling, and output definitions.
-
-State is stored locally for this lab. Terraform `moved` blocks preserve resource identity after the infrastructure was refactored into the module, preventing unchanged resources from being treated as new.
-
-## Testing Performed
-
-Local testing with Floci covered:
-
-- Creating the complete infrastructure stack
-- Refactoring resources into the reusable module
-- Detecting infrastructure drift
-- Replacing Auto Scaling Group instances
-- Updating launch template versions
-- Triggering rolling instance refresh behavior
-- Confirming that Terraform does not overwrite autoscaling changes to desired capacity
-
-## Limitations
-
-Floci is useful for testing Terraform structure, resource relationships, drift detection, and lifecycle behavior, but it does not reproduce every detail of AWS.
-
-A real AWS deployment is still needed to validate ALB routing, EC2 bootstrapping, SSM session connectivity, CloudWatch alarm evaluation, target group health checks, and production networking behavior. This repository should therefore be viewed as a local lab, not a production deployment.
-
-## Future Plans
-
-- Deploy and validate the architecture in a real AWS account
-- Add an architecture diagram
-- Include evidence from the live deployment, such as screenshots or command output
-- Document AWS costs, cleanup, and operational considerations
-
-## Running Locally
-
-With Floci available on port `4566`, run the following from the repository:
+Use an authenticated AWS CLI profile and do not place credentials in Terraform files.
 
 ```bash
-cd environments/floci
+cd environments/aws
+export AWS_PROFILE=terraform-lab
+aws sso login
 terraform init
 terraform plan
 terraform apply
 ```
 
-To remove the local resources:
+Retrieve the load balancer address with `terraform output -raw alb_dns_name`. When finished, run `terraform destroy` because EC2, the load balancer, and interface endpoints can create hourly charges.
 
-```bash
-terraform destroy
-```
+For local development with Floci, run the same Terraform commands from `environments/floci` while the emulator is available on port `4566`.
 
-The current provider configuration is intended for local testing. Review its endpoint, credentials, and validation settings before targeting a real AWS account.
+## Next Steps
+
+The current scope focuses on a multi-AZ VPC, isolated private compute, secure administration, and automated scaling. Future improvements include TLS with ACM, encrypted remote state with locking, tighter IAM policies, centralized logging, consistent resource tags, and automated Terraform checks in CI.
+
+## What I Learned
+
+This project gave me hands-on experience with Terraform modules, AWS networking, load balancing, Auto Scaling, IAM, VPC endpoints, Systems Manager, troubleshooting, and cost-aware cleanup. More importantly, I learned why private networking, health checks, multiple Availability Zones, and controlled administrative access matter.

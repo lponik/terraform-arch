@@ -5,6 +5,10 @@
 *.tfstate
 *.tfstate.*
 
+# Saved Terraform plan files can contain sensitive values
+tfplan
+*.tfplan
+
 # Terraform crash logs
 crash.log
 crash.*.log

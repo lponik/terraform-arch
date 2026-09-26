@@ -1,5 +1,7 @@
 resource "aws_vpc" "lab" {
-  cidr_block = var.vpc_cidr
+  cidr_block           = var.vpc_cidr
+  enable_dns_support   = true
+  enable_dns_hostnames = true
 
   tags = {
     Name        = "terraform-floci-lab"
@@ -8,8 +10,9 @@ resource "aws_vpc" "lab" {
 }
 
 resource "aws_subnet" "public_a" {
-  vpc_id     = aws_vpc.lab.id
-  cidr_block = "10.0.1.0/24"
+  vpc_id            = aws_vpc.lab.id
+  cidr_block        = "10.0.1.0/24"
+  availability_zone = "us-east-1a"
 }
 
 resource "aws_subnet" "public_b" {
@@ -59,6 +62,32 @@ resource "aws_route_table_association" "public_a" {
 resource "aws_route_table_association" "public_b" {
   subnet_id      = aws_subnet.public_b.id
   route_table_id = aws_route_table.public.id
+}
+
+resource "aws_route_table" "private_a" {
+  vpc_id = aws_vpc.lab.id
+
+  tags = {
+    Name = "terraform-floci-private-a-rt"
+  }
+}
+
+resource "aws_route_table" "private_b" {
+  vpc_id = aws_vpc.lab.id
+
+  tags = {
+    Name = "terraform-floci-private-b-rt"
+  }
+}
+
+resource "aws_route_table_association" "private_a" {
+  subnet_id      = aws_subnet.private_a.id
+  route_table_id = aws_route_table.private_a.id
+}
+
+resource "aws_route_table_association" "private_b" {
+  subnet_id      = aws_subnet.private_b.id
+  route_table_id = aws_route_table.private_b.id
 }
 
 resource "aws_security_group" "alb" {
@@ -119,18 +148,18 @@ resource "aws_security_group" "ssm_endpoint" {
   description = "Allow inbound HTTPS traffic from EC2"
   vpc_id      = aws_vpc.lab.id
 
-  ingress{
-    description = "HTTPS from EC2 SG"
+  ingress {
+    description     = "HTTPS from EC2 SG"
     security_groups = [aws_security_group.ec2.id]
-    from_port = 443
-    to_port = 443
-    protocol = "tcp"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
   }
 }
 
 resource "aws_vpc_endpoint" "ssm" {
   vpc_id            = aws_vpc.lab.id
-  service_name      = "com.amazonaws.us-east-1.ssm"
+  service_name      = "com.amazonaws.${var.aws_region}.ssm"
   vpc_endpoint_type = "Interface"
 
   security_group_ids = [
@@ -138,12 +167,12 @@ resource "aws_vpc_endpoint" "ssm" {
   ]
 
   private_dns_enabled = true
-  subnet_ids = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+  subnet_ids          = [aws_subnet.private_a.id, aws_subnet.private_b.id]
 }
 
 resource "aws_vpc_endpoint" "ssmmessages" {
   vpc_id            = aws_vpc.lab.id
-  service_name      = "com.amazonaws.us-east-1.ssmmessages"
+  service_name      = "com.amazonaws.${var.aws_region}.ssmmessages"
   vpc_endpoint_type = "Interface"
 
   security_group_ids = [
@@ -151,5 +180,16 @@ resource "aws_vpc_endpoint" "ssmmessages" {
   ]
 
   private_dns_enabled = true
-  subnet_ids = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+  subnet_ids          = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+}
+
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id            = aws_vpc.lab.id
+  service_name      = "com.amazonaws.${var.aws_region}.s3"
+  vpc_endpoint_type = "Gateway"
+
+  route_table_ids = [
+    aws_route_table.private_a.id,
+    aws_route_table.private_b.id,
+  ]
 }

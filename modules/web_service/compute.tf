@@ -1,7 +1,7 @@
 resource "aws_launch_template" "web" {
   name = "terraform-floci-web"
 
-  image_id      = "ami-amazonlinux2023"
+  image_id      = var.ami_id
   instance_type = var.instance_type
 
   iam_instance_profile {
@@ -30,8 +30,8 @@ resource "aws_launch_template" "web" {
 resource "aws_autoscaling_group" "web" {
   name = "terraform-floci-asg"
   lifecycle {
-      ignore_changes = [ desired_capacity ]  
-   }
+    ignore_changes = [desired_capacity]
+  }
 
   min_size         = 3
   max_size         = 4
@@ -46,14 +46,14 @@ resource "aws_autoscaling_group" "web" {
     id      = aws_launch_template.web.id
     version = aws_launch_template.web.latest_version
   }
-  health_check_type = "ELB"
+  health_check_type         = "ELB"
   health_check_grace_period = 300
 
   instance_refresh {
     strategy = "Rolling"
     preferences {
       min_healthy_percentage = 70
-      instance_warmup = 300
+      instance_warmup        = 300
     }
   }
 }
